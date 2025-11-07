@@ -28,6 +28,7 @@
 #include <sstream>
 #include <cstring>
 #include <iostream>
+#include <iomanip> // for std::hex and std::setw
 #include <atomic>
 
 namespace http
@@ -51,36 +52,38 @@ namespace http
         return false;
     }
 
-	static std::vector<std::string> string_split(const std::string &str, char delimiter, size_t limit = 0) 
-	{
-		std::vector<std::string> parts;
-		size_t start = 0;
-		size_t end = str.find(delimiter);
+    static std::string string_trim_start(const std::string& str) 
+    {
+        size_t start = 0;
 
-		if(limit > 0)
-		{
-			while (end != std::string::npos && parts.size() < limit - 1) 
-			{
-				parts.push_back(str.substr(start, end - start));
-				start = end + 1;
-				end = str.find(delimiter, start);
-			}
-		}
-		else
-		{
-			while (end != std::string::npos) 
-			{
-				parts.push_back(str.substr(start, end - start));
-				start = end + 1;
-				end = str.find(delimiter, start);
-			}
-		}
+        // Find the first non-whitespace character
+        while (start < str.length() && std::isspace(static_cast<unsigned char>(str[start]))) 
+        {
+            ++start;
+        }
 
-		parts.push_back(str.substr(start));
+        // Return the substring from the first non-whitespace character to the end
+        return str.substr(start);
+    }
 
-		return parts;
-	}
+    static std::vector<std::string> string_split(const std::string& str, char separator, size_t max_parts = 0) 
+    {
+        std::vector<std::string> result;
+        size_t start = 0;
+        size_t end = 0;
 
+        while ((end = str.find(separator, start)) != std::string::npos) {
+            result.push_back(str.substr(start, end - start));
+            start = end + 1;
+
+            if (max_parts > 0 && result.size() >= max_parts - 1) {
+                break; // Stop if we have reached maximum parts
+            }
+        }
+        result.push_back(str.substr(start)); // Add the last part
+        return result;
+    }
+    
 	static bool try_parse_uint16(const std::string &value, uint16_t &v)
 	{
         std::stringstream ss(value);
@@ -91,6 +94,17 @@ namespace http
         
         return true;
 	}
+
+    static bool try_parse_int32(const std::string &value, int32_t &v)
+    {
+        std::stringstream ss(value);
+        ss >> v;
+
+        if (ss.fail() || !ss.eof())
+            return false;
+        
+        return true;
+    }
 
     static bool uri_get_scheme(const std::string &uri, std::string &value) 
 	{
@@ -358,19 +372,8 @@ namespace http
 
 		close(&s);
 
-        std::istringstream responseStream(response);
-        std::string statusLine;
-        if (std::getline(responseStream, statusLine)) // Get the first line of the response
-        {
-            std::istringstream statusLineStream(statusLine);
-            std::string httpVersion;
-            // Extract the HTTP version and status code
-            statusLineStream >> httpVersion >> res.statusCode;
-        }
-        else
-        {
-            return false; // No valid status line found
-        }
+        if(!parse_header(response, res.header, res.statusCode))
+            return false;
 
         if(response.size() > 0)
         {
@@ -402,14 +405,14 @@ namespace http
         CURL *gCurl = curl::easy_init();
         if (!gCurl) return false;
 
-        std::string header;
+        std::string requestHeader;
         std::string response;
 
         curl::easy_setopt(gCurl, CURLOPT_URL, req.get_url().c_str());
         curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, WriteCallback);
         curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, &response);
         curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, HeaderCallback);
-        curl::easy_setopt(gCurl, CURLOPT_HEADERDATA, &header);
+        curl::easy_setopt(gCurl, CURLOPT_HEADERDATA, &requestHeader);
 
 		struct curl_slist* requestHeaderList = nullptr;
 
@@ -441,19 +444,11 @@ namespace http
 		if(requestHeaderList)
 			curl::slist_free_all(requestHeaderList);
 
-        std::istringstream responseStream(header);
-        std::string statusLine;
-        if (std::getline(responseStream, statusLine)) // Get the first line of the response
+        if(!parse_header(requestHeader, res.header, res.statusCode))
         {
-            std::istringstream statusLineStream(statusLine);
-            std::string httpVersion;
-            // Extract the HTTP version and status code
-            statusLineStream >> httpVersion >> res.statusCode;
-        }
-        else
-        {
+            write_error("Failed to parse header");
             curl::easy_cleanup(gCurl);
-            return false; // No valid status line found
+            return false;
         }
 
         if(response.size() > 0)
@@ -528,19 +523,8 @@ namespace http
 
 		close(&s);
 
-        std::istringstream responseStream(response);
-        std::string statusLine;
-        if (std::getline(responseStream, statusLine)) // Get the first line of the response
-        {
-            std::istringstream statusLineStream(statusLine);
-            std::string httpVersion;
-            // Extract the HTTP version and status code
-            statusLineStream >> httpVersion >> res.statusCode;
-        }
-        else
-        {
-            return false; // No valid status line found
-        }
+        if(!parse_header(response, res.header, res.statusCode))
+            return false;
 
         if(response.size() > 0)
         {
@@ -597,19 +581,10 @@ namespace http
 
         curl::slist_free_all(requestHeaderList);
 
-        std::istringstream responseStream(responseHeader);
-        std::string statusLine;
-        if (std::getline(responseStream, statusLine)) // Get the first line of the response
-        {
-            std::istringstream statusLineStream(statusLine);
-            std::string httpVersion;
-            // Extract the HTTP version and status code
-            statusLineStream >> httpVersion >> res.statusCode;
-        }
-        else
+        if(!parse_header(responseHeader, res.header, res.statusCode))
         {
             curl::easy_cleanup(gCurl);
-            return false; // No valid status line found
+            return false;
         }
 
         if(response.size() > 0)
@@ -783,6 +758,49 @@ namespace http
         return true; // All bytes sent successfully
     }
 
+    bool client::parse_header(const std::string &responseText, headers &header, int &statusCode)
+    {
+        std::istringstream responseStream(responseText);
+        std::string line;
+        size_t count = 0;
+
+        while(std::getline(responseStream, line))
+        {
+            line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
+
+            if(line.size() == 0)
+                continue;
+
+            if(count == 0)
+            {
+                if(line[line.size() - 1] == ' ')
+                    line.pop_back();
+
+                auto parts = string_split(line, ' ', 0);
+                
+                if(parts.size() < 2)
+                    return false;
+
+                if(!try_parse_int32(parts[1], statusCode))
+                    return false;
+            }
+            else
+            {
+                auto fields = string_split(line, ':', 2);
+
+                if(fields.size() == 2)
+                {
+                    fields[1] = string_trim_start(fields[1]);
+                    header[fields[0]] = fields[1];
+                }
+            }
+
+            count++;
+        }
+
+        return count > 0;
+    }
+
     request::request()
     {
         content = nullptr;
@@ -809,10 +827,10 @@ namespace http
         return url;
     }
 
-    request &request::set_content(void *data, size_t size, bool copyData)
+    void request::set_content(void *data, size_t size, bool copyData)
     {
         if(!data || size == 0)
-            return *this;
+            return;
 
         if(content && ownsData)
         {
@@ -835,7 +853,7 @@ namespace http
             contentLength = size;
         }
 
-        return *this;
+        return;
     }
 
     uint8_t *request::get_content() const
@@ -848,10 +866,9 @@ namespace http
         return contentLength;
     }
 
-    request &request::set_header(const std::string &key, const std::string &value)
+    void request::set_header(const std::string &key, const std::string &value)
     {
         header[key] = value;
-        return *this;
     }
 
     headers request::get_headers() const

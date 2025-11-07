@@ -92,10 +92,10 @@ namespace http
         ~request();
         request &set_url(const std::string &url);
         std::string get_url() const;
-        request &set_content(void *data, size_t size, bool copyData = false);
+        void set_content(void *data, size_t size, bool copyData = false);
         uint8_t *get_content() const;
         uint64_t get_content_length() const;
-        request &set_header(const std::string &key, const std::string &value);
+        void set_header(const std::string &key, const std::string &value);
         headers get_headers() const;
     private:
         std::string url;
@@ -141,6 +141,7 @@ namespace http
 		int64_t peek(socket_t *s, void *buffer, size_t size);
 		int64_t write(socket_t *s, const void *buffer, size_t size);
         bool write_all_bytes(socket_t *s, const void *buffer, size_t size);
+        static bool parse_header(const std::string &responseText, headers &header, int &statusCode);
 	};
 }
 
