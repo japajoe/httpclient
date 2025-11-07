@@ -3,7 +3,7 @@
 
 int main(int argc, char **argv)
 {
-	http::client client(false);
+	http::client client;
 
 	http::request request;
 	request.set_url("http://api.ipify.org");
