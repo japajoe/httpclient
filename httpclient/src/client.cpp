@@ -296,29 +296,29 @@ namespace http
         gCount.store(gCount.load() - 1);
 	}
 
-	bool client::get(const std::string &url, const headers *requestHeaders, int &statusCode, std::string &response)
+	bool client::get(const request &req, response &res)
 	{
         if(curl::is_loaded())
-            return get_from_curl(url, requestHeaders, statusCode, response);
+            return get_from_curl(req, res);
         else
-            return get_from_socket(url, requestHeaders, statusCode, response);
+            return get_from_socket(req, res);
 	}
 
-    bool client::post(const std::string &url, const headers *requestHeaders, const void *data, size_t size, const std::string &contentType, int &statusCode, std::string &response)
+    bool client::post(const request &req, const std::string &contentType, response &res)
     {
         if(curl::is_loaded())
-            return post_from_curl(url, requestHeaders, data, size, contentType, statusCode, response);
+            return post_from_curl(req, contentType, res);
         else
-            return post_from_socket(url, requestHeaders, data, size, contentType, statusCode, response);
+            return post_from_socket(req, contentType, res);
     }
     
-    bool client::get_from_socket(const std::string &url, const headers *requestHeaders, int &statusCode, std::string &response)
+    bool client::get_from_socket(const request &req, response &res)
     {
 		socket_t s = {0};
         std::string path;
         std::string hostName;
 
-        if(!connect(&s, url, path, hostName))
+        if(!connect(&s, req.get_url(), path, hostName))
             return false;
 
 		std::string request;
@@ -327,10 +327,11 @@ namespace http
     	request += "Host: " + hostName + "\r\n";
     	request += "Accept: */*\r\n";
 
-		if(requestHeaders)
+        auto requestHeaders = req.get_headers();
+
+		if(requestHeaders.size() > 0)
 		{
-			const auto &rh = *requestHeaders;
-			for(const auto &h : rh)
+			for(const auto &h : requestHeaders)
 			{
 				request += h.first + ": " + h.second + "\r\n";
 			}
@@ -348,6 +349,7 @@ namespace http
 		int64_t bytesReceived = 0;
 		unsigned char buffer[1024];
 		std::memset(buffer, 0, 1024);
+        std::string response;
 
 		while ((bytesReceived = read(&s, buffer, 1023)) > 0) 
 		{
@@ -363,11 +365,17 @@ namespace http
             std::istringstream statusLineStream(statusLine);
             std::string httpVersion;
             // Extract the HTTP version and status code
-            statusLineStream >> httpVersion >> statusCode;
+            statusLineStream >> httpVersion >> res.statusCode;
         }
         else
         {
             return false; // No valid status line found
+        }
+
+        if(response.size() > 0)
+        {
+            res.content.resize(response.size());
+            std::memcpy(res.content.data(), response.data(), response.size());
         }
 
 		return true;
@@ -389,14 +397,15 @@ namespace http
         return totalSize;
     }
 
-    bool client::get_from_curl(const std::string &url, const headers *requestHeaders, int &statusCode, std::string &response)
+    bool client::get_from_curl(const request &req, response &res)
     {
         CURL *gCurl = curl::easy_init();
         if (!gCurl) return false;
 
         std::string header;
+        std::string response;
 
-        curl::easy_setopt(gCurl, CURLOPT_URL, url.c_str());
+        curl::easy_setopt(gCurl, CURLOPT_URL, req.get_url().c_str());
         curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, WriteCallback);
         curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, &response);
         curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, HeaderCallback);
@@ -404,11 +413,11 @@ namespace http
 
 		struct curl_slist* requestHeaderList = nullptr;
 
-		if(requestHeaders)
-		{
-			const auto &rh = *requestHeaders;
+        auto requestHeaders = req.get_headers();
 
-			for(const auto &h : rh)
+		if(requestHeaders.size() > 0)
+		{
+			for(const auto &h : requestHeaders)
 			{
 				std::string s = h.first + ": " + h.second;
 				requestHeaderList = curl::slist_append(requestHeaderList, s.c_str());
@@ -417,11 +426,11 @@ namespace http
 			curl::easy_setopt(gCurl, CURLOPT_HTTPHEADER, requestHeaderList);
 		}
 
-        CURLcode res = curl::easy_perform(gCurl);
+        CURLcode result = curl::easy_perform(gCurl);
 
-        if (res != CURLE_OK) 
+        if (result != CURLE_OK) 
         {
-			std::string error = "GET request failed: " + std::string(curl::easy_strerror(res));
+			std::string error = "GET request failed: " + std::string(curl::easy_strerror(result));
             write_error(error);
 			if(requestHeaderList)
 				curl::slist_free_all(requestHeaderList);
@@ -439,12 +448,18 @@ namespace http
             std::istringstream statusLineStream(statusLine);
             std::string httpVersion;
             // Extract the HTTP version and status code
-            statusLineStream >> httpVersion >> statusCode;
+            statusLineStream >> httpVersion >> res.statusCode;
         }
         else
         {
             curl::easy_cleanup(gCurl);
             return false; // No valid status line found
+        }
+
+        if(response.size() > 0)
+        {
+            res.content.resize(response.size());
+            std::memcpy(res.content.data(), response.data(), response.size());
         }
         
         curl::easy_cleanup(gCurl);
@@ -452,16 +467,16 @@ namespace http
         return true;
     }
 
-    bool client::post_from_socket(const std::string &url, const headers *requestHeaders, const void *data, size_t size, const std::string &contentType, int &statusCode, std::string &response)
+    bool client::post_from_socket(const request &req, const std::string &contentType, response &res)
     {
-        if(data == nullptr || size == 0)
+        if(req.get_content() == nullptr || req.get_content_length() == 0)
             return false;
 
 		socket_t s = {0};
         std::string path;
         std::string hostName;
 
-        if(!connect(&s, url, path, hostName))
+        if(!connect(&s, req.get_url(), path, hostName))
             return false;
 
         if(string_ends_with(path, "/"))
@@ -473,17 +488,18 @@ namespace http
         request += "Host: " + hostName + "\r\n";
         request += "Accept: */*\r\n";
 
-		if(requestHeaders)
+        auto requestHeaders = req.get_headers();
+
+		if(requestHeaders.size() > 0)
 		{
-			const auto &rh = *requestHeaders;
-			for(const auto &h : rh)
+			for(const auto &h : requestHeaders)
 			{
 				request += h.first + ": " + h.second + "\r\n";
 			}
 		}
 
 		request += "Content-Type: " + contentType + "\r\n";
-        request += "Content-Length: " + std::to_string(size) + "\r\n";
+        request += "Content-Length: " + std::to_string(req.get_content_length()) + "\r\n";
         request += "Connection: close\r\n\r\n";
 
         // Send the header
@@ -494,7 +510,7 @@ namespace http
         }
 
         // Send the content
-        if(!write_all_bytes(&s, data, size))
+        if(!write_all_bytes(&s, req.get_content(), req.get_content_length()))
         {
             close(&s);
             return false;
@@ -503,6 +519,7 @@ namespace http
         int64_t bytesReceived = 0;
         uint8_t buffer[1024];
         std::memset(buffer, 0, 1024);
+        std::string response;
 
 		while ((bytesReceived = read(&s, buffer, 1023)) > 0) 
 		{
@@ -518,26 +535,33 @@ namespace http
             std::istringstream statusLineStream(statusLine);
             std::string httpVersion;
             // Extract the HTTP version and status code
-            statusLineStream >> httpVersion >> statusCode;
+            statusLineStream >> httpVersion >> res.statusCode;
         }
         else
         {
             return false; // No valid status line found
         }
 
+        if(response.size() > 0)
+        {
+            res.content.resize(response.size());
+            std::memcpy(res.content.data(), response.data(), response.size());
+        }
+
 		return true;
     }
 
-    bool client::post_from_curl(const std::string &url, const headers *requestHeaders, const void *data, size_t size, const std::string &contentType, int &statusCode, std::string &response)
+    bool client::post_from_curl(const request &req, const std::string &contentType, response &res)
     {
         CURL *gCurl = curl::easy_init();
         if (!gCurl) return false;
 
         std::string responseHeader;
+        std::string response;
 
-        curl::easy_setopt(gCurl, CURLOPT_URL, url.c_str());
-        curl::easy_setopt(gCurl, CURLOPT_POSTFIELDS, (void*)data);
-        curl::easy_setopt(gCurl, CURLOPT_POSTFIELDSIZE, size);
+        curl::easy_setopt(gCurl, CURLOPT_URL, req.get_url().c_str());
+        curl::easy_setopt(gCurl, CURLOPT_POSTFIELDS, (void*)req.get_content());
+        curl::easy_setopt(gCurl, CURLOPT_POSTFIELDSIZE, req.get_content_length());
         curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, (void*)WriteCallback);
         curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, &response);
         curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, HeaderCallback);
@@ -547,11 +571,11 @@ namespace http
         struct curl_slist* requestHeaderList = nullptr;
         requestHeaderList = curl::slist_append(requestHeaderList, cType.c_str());
 
-		if(requestHeaders)
-		{
-			const auto &rh = *requestHeaders;
+        auto requestHeaders = req.get_headers();
 
-			for(const auto &h : rh)
+		if(requestHeaders.size())
+		{
+			for(const auto &h : requestHeaders)
 			{
 				std::string s = h.first + ": " + h.second;
 				requestHeaderList = curl::slist_append(requestHeaderList, s.c_str());
@@ -560,11 +584,11 @@ namespace http
 
         curl::easy_setopt(gCurl, CURLOPT_HTTPHEADER, requestHeaderList);
 
-        CURLcode res = curl::easy_perform(gCurl);
+        CURLcode result = curl::easy_perform(gCurl);
 
-        if (res != CURLE_OK) 
+        if (result != CURLE_OK) 
         {
-			std::string error = "POST request failed: " + std::string(curl::easy_strerror(res));
+			std::string error = "POST request failed: " + std::string(curl::easy_strerror(result));
 			write_error(error);
             curl::slist_free_all(requestHeaderList);
             curl::easy_cleanup(gCurl);
@@ -580,12 +604,18 @@ namespace http
             std::istringstream statusLineStream(statusLine);
             std::string httpVersion;
             // Extract the HTTP version and status code
-            statusLineStream >> httpVersion >> statusCode;
+            statusLineStream >> httpVersion >> res.statusCode;
         }
         else
         {
             curl::easy_cleanup(gCurl);
             return false; // No valid status line found
+        }
+
+        if(response.size() > 0)
+        {
+            res.content.resize(response.size());
+            std::memcpy(res.content.data(), response.data(), response.size());
         }
 
         curl::easy_cleanup(gCurl);
@@ -751,5 +781,115 @@ namespace http
         }
 
         return true; // All bytes sent successfully
+    }
+
+    request::request()
+    {
+        content = nullptr;
+        contentLength = 0;
+        ownsData = false;
+    }
+
+    request::~request()
+    {
+        if(content && ownsData)
+        {
+            delete[] content;
+        }
+    }
+
+    request &request::set_url(const std::string &url)
+    {
+        this->url = url;
+        return *this;
+    }
+
+    std::string request::get_url() const
+    {   
+        return url;
+    }
+
+    request &request::set_content(void *data, size_t size, bool copyData)
+    {
+        if(!data || size == 0)
+            return *this;
+
+        if(content && ownsData)
+        {
+            delete[] content;
+            content = nullptr;
+            contentLength = 0;
+        }
+
+        ownsData = copyData;
+        contentLength = size;
+
+        if(ownsData)
+        {
+            content = new uint8_t[size];
+            std::memcpy(content, data, size);
+        }
+        else
+        {
+            content = reinterpret_cast<uint8_t*>(data);
+            contentLength = size;
+        }
+
+        return *this;
+    }
+
+    uint8_t *request::get_content() const
+    {
+        return content;
+    }
+
+    uint64_t request::get_content_length() const
+    {
+        return contentLength;
+    }
+
+    request &request::set_header(const std::string &key, const std::string &value)
+    {
+        header[key] = value;
+        return *this;
+    }
+
+    headers request::get_headers() const
+    {
+        return header;
+    }
+
+    response::response()
+    {
+        statusCode = 0;
+    }
+
+    int response::get_status_code() const
+    {
+        return statusCode;
+    }
+    
+    std::vector<uint8_t> &response::get_content()
+    {
+        return content;
+    }
+
+    std::string response::get_content_as_string() const
+    {
+        if(content.size() == 0)
+            return 0;
+        
+        std::string res((char*)content.data(), content.size());
+        return res;
+    }
+
+    uint64_t response::get_content_length() const
+    {
+        return content.size();
+    }
+
+    headers &response::get_headers()
+    {
+        return header;
     }
 }

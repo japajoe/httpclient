@@ -49,6 +49,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <unordered_map>
+#include <vector>
 
 namespace http
 {
@@ -83,18 +84,57 @@ namespace http
 
 	using headers = std::unordered_map<std::string,std::string>;
 
+
+    class request
+    {
+    public:
+        request();
+        ~request();
+        request &set_url(const std::string &url);
+        std::string get_url() const;
+        request &set_content(void *data, size_t size, bool copyData = false);
+        uint8_t *get_content() const;
+        uint64_t get_content_length() const;
+        request &set_header(const std::string &key, const std::string &value);
+        headers get_headers() const;
+    private:
+        std::string url;
+        uint8_t *content;
+        uint64_t contentLength;
+        headers header;
+        bool ownsData;
+    };
+    
+    class client;
+
+    class response
+    {
+    friend class client;
+    public:
+        response();
+        int get_status_code() const;
+        std::vector<uint8_t> &get_content();
+        std::string get_content_as_string() const;
+        uint64_t get_content_length() const;
+        headers &get_headers();
+    private:
+        int statusCode;
+        std::vector<uint8_t> content;
+        headers header;
+    };
+
 	class client
 	{
 	public:
 		client();
 		~client();
-		bool get(const std::string &url, const headers *requestHeaders, int &statusCode, std::string &response);
-        bool post(const std::string &url, const headers *requestHeaders, const void *data, size_t size, const std::string &contentType, int &statusCode, std::string &response);
+		bool get(const request &req, response &res);
+        bool post(const request &req, const std::string &contentType, response &res);
 	private:
-        bool get_from_socket(const std::string &url, const headers *requestHeaders, int &statusCode, std::string &response);
-        bool get_from_curl(const std::string &url, const headers *requestHeaders, int &statusCode, std::string &response);
-        bool post_from_socket(const std::string &url, const headers *requestHeaders, const void *data, size_t size, const std::string &contentType, int &statusCode, std::string &response);
-        bool post_from_curl(const std::string &url, const headers *requestHeaders, const void *data, size_t size, const std::string &contentType, int &statusCode, std::string &response);
+        bool get_from_socket(const request &req, response &res);
+        bool get_from_curl(const request &req, response &res);
+        bool post_from_socket(const request &req, const std::string &contentType, response &res);
+        bool post_from_curl(const request &req, const std::string &contentType, response &res);
         bool connect(socket_t *s, const std::string &url, std::string &path, std::string &hostName);
 		void close(socket_t *s);
 		int64_t read(socket_t *s, void *buffer, size_t size);
