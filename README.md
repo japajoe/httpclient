@@ -1,0 +1,2 @@
+# httpclient
+Just a simple http client using libcurl and fallback to regular sockets if libcurl isn't found. On Windows, put curl.dll in the same directory as the executable. On Linux this library does an attempt to find libcurl.so in any of the common library paths. This is not a production ready library, nor am I trying to make it as such. I was simply in need of a http client library that will still function without libcurl.
