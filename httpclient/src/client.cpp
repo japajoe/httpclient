@@ -257,8 +257,9 @@ namespace http
         return ip_version_invalid;
     }
 
-	client::client()
+	client::client(bool useCurl)
 	{
+        this->useCurl = useCurl;
     #ifdef _WIN32
         if(gCount.load() == 0)
         {
@@ -312,7 +313,7 @@ namespace http
 
 	bool client::get(const request &req, response &res)
 	{
-        if(curl::is_loaded())
+        if(curl::is_loaded() && useCurl)
             return get_from_curl(req, res);
         else
             return get_from_socket(req, res);
@@ -320,7 +321,7 @@ namespace http
 
     bool client::post(const request &req, const std::string &contentType, response &res)
     {
-        if(curl::is_loaded())
+        if(curl::is_loaded() && useCurl)
             return post_from_curl(req, contentType, res);
         else
             return post_from_socket(req, contentType, res);
@@ -363,22 +364,27 @@ namespace http
 		int64_t bytesReceived = 0;
 		unsigned char buffer[1024];
 		std::memset(buffer, 0, 1024);
-        std::string response;
+        std::string responseHeader;
 
 		while ((bytesReceived = read(&s, buffer, 1023)) > 0) 
 		{
-			response.append((char*)buffer, bytesReceived);
+			responseHeader.append((char*)buffer, bytesReceived);
 		}
 
 		close(&s);
 
-        if(!parse_header(response, res.header, res.statusCode))
+        std::string header;
+        std::string body;
+
+        split_header_and_body(responseHeader, header, body);
+
+        if(!parse_header(responseHeader, res.header, res.statusCode))
             return false;
 
-        if(response.size() > 0)
+        if(body.size() > 0)
         {
-            res.content.resize(response.size());
-            std::memcpy(res.content.data(), response.data(), response.size());
+            res.content.resize(body.size());
+            std::memcpy(res.content.data(), body.data(), body.size());
         }
 
 		return true;
@@ -514,22 +520,27 @@ namespace http
         int64_t bytesReceived = 0;
         uint8_t buffer[1024];
         std::memset(buffer, 0, 1024);
-        std::string response;
+        std::string responseHeader;
 
 		while ((bytesReceived = read(&s, buffer, 1023)) > 0) 
 		{
-			response.append((char*)buffer, bytesReceived);
+			responseHeader.append((char*)buffer, bytesReceived);
 		}
 
 		close(&s);
 
-        if(!parse_header(response, res.header, res.statusCode))
+        std::string header;
+        std::string body;
+
+        split_header_and_body(responseHeader, header, body);
+
+        if(!parse_header(header, res.header, res.statusCode))
             return false;
 
-        if(response.size() > 0)
+        if(body.size() > 0)
         {
-            res.content.resize(response.size());
-            std::memcpy(res.content.data(), response.data(), response.size());
+            res.content.resize(body.size());
+            std::memcpy(res.content.data(), body.data(), body.size());
         }
 
 		return true;
@@ -799,6 +810,24 @@ namespace http
         }
 
         return count > 0;
+    }
+
+    void client::split_header_and_body(const std::string &response, std::string &header, std::string &body)
+    {
+        std::string separator = "\r\n\r\n";
+        size_t pos = response.find(separator);
+
+        if (pos != std::string::npos) 
+        {
+            header = response.substr(0, pos);
+            body = response.substr(pos + separator.length());
+        } 
+        else 
+        {
+            // If no separator is found, assign entire response to header
+            header = response;
+            body = ""; // No body present
+        }
     }
 
     request::request()

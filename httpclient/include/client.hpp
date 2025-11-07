@@ -126,11 +126,12 @@ namespace http
 	class client
 	{
 	public:
-		client();
+		client(bool useCurl = true);
 		~client();
 		bool get(const request &req, response &res);
         bool post(const request &req, const std::string &contentType, response &res);
 	private:
+        bool useCurl;
         bool get_from_socket(const request &req, response &res);
         bool get_from_curl(const request &req, response &res);
         bool post_from_socket(const request &req, const std::string &contentType, response &res);
@@ -142,6 +143,7 @@ namespace http
 		int64_t write(socket_t *s, const void *buffer, size_t size);
         bool write_all_bytes(socket_t *s, const void *buffer, size_t size);
         static bool parse_header(const std::string &responseText, headers &header, int &statusCode);
+        static void split_header_and_body(const std::string &response, std::string &header, std::string &body);
 	};
 }
 
