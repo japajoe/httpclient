@@ -261,6 +261,7 @@ namespace http
 	client::client(bool useCurl)
 	{
         this->useCurl = useCurl;
+        validateCertificate = true;
     #ifdef _WIN32
         if(gCount.load() == 0)
         {
@@ -326,6 +327,26 @@ namespace http
             return post_from_curl(req, res);
         else
             return post_from_socket(req, res);
+    }
+
+    void client::set_use_curl(bool use)
+    {
+        useCurl = use;
+    }
+
+    bool client::use_curl() const
+    {
+        return useCurl;
+    }
+
+    void client::set_validate_certificate(bool validate)
+    {
+        validateCertificate = validate;
+    }
+
+    bool client::validate_certificate() const
+    {
+        return validateCertificate;
     }
     
     bool client::get_from_socket(const request &req, response &res)
@@ -407,6 +428,13 @@ namespace http
         curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, this);
         curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, header_callback);
         curl::easy_setopt(gCurl, CURLOPT_HEADERDATA, &requestHeader);
+
+        // Disable SSL peer verification
+        if(!validateCertificate)
+        {
+            curl::easy_setopt(gCurl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl::easy_setopt(gCurl, CURLOPT_SSL_VERIFYHOST, 0L);
+        }
 
 		struct curl_slist* requestHeaderList = nullptr;
 
@@ -559,6 +587,13 @@ namespace http
         curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, write_callback);
         curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, this);
         curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, header_callback);
+
+        // Disable SSL peer verification
+        if(!validateCertificate)
+        {
+            curl::easy_setopt(gCurl, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl::easy_setopt(gCurl, CURLOPT_SSL_VERIFYHOST, 0L);
+        }
         
         std::string responseHeader;
         curl::easy_setopt(gCurl, CURLOPT_HEADERDATA, &responseHeader);
@@ -619,13 +654,13 @@ namespace http
 
         if(!uri_get_scheme(URL, scheme)) 
 		{
-            write_error("client::get_string: failed to determine scheme from URI " + URL);
+            write_error("client::connect: failed to determine scheme from URI " + URL);
             return false;
         }
 
         if(!uri_get_path(URL, path)) 
 		{
-            write_error("client::get_string: failed to determine path from URI " + URL);
+            write_error("client::connect: failed to determine path from URI " + URL);
             return false;
         }
 
@@ -634,7 +669,7 @@ namespace http
         
         if(!resolve(URL, ip, port, hostName)) 
         {
-            write_error("client::get_string: failed to resolve IP from URI " + URL);
+            write_error("client::connect: failed to resolve IP from URI " + URL);
             return false;
         }
 
@@ -642,7 +677,7 @@ namespace http
 
         if(ipVersion == ip_version_invalid) 
 		{
-            write_error("client::get_string: invalid IP version");
+            write_error("client::connect: invalid IP version");
             return false;
         }
         
@@ -652,7 +687,7 @@ namespace http
 
         if(s->fd < 0) 
 		{
-            write_error("client::get_string: failed to create socket");
+            write_error("client::connect: failed to create socket");
             return false;
         }
 
@@ -677,7 +712,7 @@ namespace http
 
         if(connectionResult < 0) 
 		{
-            write_error("client::get_string: failed to connect");
+            write_error("client::connect: failed to connect");
             close(s);
             return false;
         }
@@ -924,10 +959,9 @@ namespace http
         }
     }
 
-    request &request::set_url(const std::string &url)
+    void request::set_url(const std::string &url)
     {
         this->url = url;
-        return *this;
     }
 
     std::string request::get_url() const

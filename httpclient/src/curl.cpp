@@ -169,6 +169,13 @@ namespace http
 		return curl_easy_setopt_ptr(c, opt, data);
 	}
 
+	CURLcode curl::easy_setopt(CURL *c, CURLoption opt, long data)
+	{
+		if(!libraryHandle)
+			return CURLE_FAILED_INIT;
+		return curl_easy_setopt_ptr(c, opt, data);
+	}
+
 	CURLcode curl::easy_perform(CURL *c)
 	{
 		if(!libraryHandle)

@@ -90,7 +90,7 @@ namespace http
     public:
         request();
         ~request();
-        request &set_url(const std::string &url);
+        void set_url(const std::string &url);
         std::string get_url() const;
         void set_content(void *data, size_t size, bool copyData = false);
         uint8_t *get_content() const;
@@ -143,19 +143,24 @@ namespace http
 		~client();
 		bool get(const request &req, response &res);
         bool post(const request &req, response &res);
+        void set_use_curl(bool use);
+        bool use_curl() const;
+        void set_validate_certificate(bool validate);
+        bool validate_certificate() const;
 	private:
         bool useCurl;
+        bool validateCertificate;
         bool get_from_socket(const request &req, response &res);
         bool get_from_curl(const request &req, response &res);
         bool post_from_socket(const request &req, response &res);
         bool post_from_curl(const request &req, response &res);
-        bool connect(socket_t *s, const std::string &url, std::string &path, std::string &hostName);
-		void close(socket_t *s);
-		int64_t read(socket_t *s, void *buffer, size_t size);
-		int64_t peek(socket_t *s, void *buffer, size_t size);
-		int64_t write(socket_t *s, const void *buffer, size_t size);
-        bool write_all_bytes(socket_t *s, const void *buffer, size_t size);
-        header_error read_header(socket_t *s, std::string &header);
+        static bool connect(socket_t *s, const std::string &url, std::string &path, std::string &hostName);
+		static void close(socket_t *s);
+		static int64_t read(socket_t *s, void *buffer, size_t size);
+		static int64_t peek(socket_t *s, void *buffer, size_t size);
+		static int64_t write(socket_t *s, const void *buffer, size_t size);
+        static bool write_all_bytes(socket_t *s, const void *buffer, size_t size);
+        static header_error read_header(socket_t *s, std::string &header);
         static bool parse_header(const std::string &responseText, headers &header, int &statusCode, uint64_t &contentLength);
         static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp);
         static size_t header_callback(void* contents, size_t size, size_t nmemb, void* userp);

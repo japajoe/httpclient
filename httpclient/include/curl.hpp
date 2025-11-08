@@ -43,6 +43,7 @@ namespace http
 		static CURLcode easy_setopt(CURL *c, CURLoption opt, curl_setopt_callback data);
 		static CURLcode easy_setopt(CURL *c, CURLoption opt, void *data);
 		static CURLcode easy_setopt(CURL *c, CURLoption opt, size_t data);
+		static CURLcode easy_setopt(CURL *c, CURLoption opt, long data);
 		static CURLcode easy_perform(CURL *c);
 		static CURLcode easy_getinfo(CURL *c, CURLINFO info, void *data);
 		static void slist_free_all(curl_slist *sl);
