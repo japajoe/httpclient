@@ -3,10 +3,17 @@
 
 int main(int argc, char **argv)
 {
-	http::client client;
+	http::client client(false);
+
+	std::string responseText;
+
+	client.onResponse = [&] (const void *data, size_t size) {
+		if(data && size > 0)
+			responseText += std::string((char*)data, size);
+	};
 
 	http::request request;
-	request.set_url("http://api.ipify.org");
+	request.set_url("https://api.ipify.org");
 	request.set_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/123.0");
 	
 	http::response response;
@@ -22,8 +29,8 @@ int main(int argc, char **argv)
 			std::cout << h.first << ": " << h.second << '\n';
 		}
 
-		if(response.get_content_length() > 0)
-			std::cout << response.get_content_as_string() << '\n';
+		if(responseText.size() > 0)
+			std::cout << responseText << '\n';
 	}
 	else
 		std::cout << "Failed to make request\n";

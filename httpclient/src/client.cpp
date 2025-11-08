@@ -37,7 +37,7 @@ namespace http
 
     static void write_error(const std::string &message) 
 	{
-		std::cout << message << '\n';
+		std::cerr << message << '\n';
     }
 
     static bool string_contains(const std::string &haystack, const std::string &needle) 
@@ -66,19 +66,19 @@ namespace http
         return str.substr(start);
     }
 
-    static std::vector<std::string> string_split(const std::string& str, char separator, size_t max_parts = 0) 
+    static std::vector<std::string> string_split(const std::string& str, char separator, size_t maxParts = 0) 
     {
         std::vector<std::string> result;
         size_t start = 0;
         size_t end = 0;
 
-        while ((end = str.find(separator, start)) != std::string::npos) {
+        while ((end = str.find(separator, start)) != std::string::npos) 
+        {
             result.push_back(str.substr(start, end - start));
             start = end + 1;
 
-            if (max_parts > 0 && result.size() >= max_parts - 1) {
+            if (maxParts > 0 && result.size() >= maxParts - 1) 
                 break; // Stop if we have reached maximum parts
-            }
         }
         result.push_back(str.substr(start)); // Add the last part
         return result;
@@ -96,6 +96,17 @@ namespace http
 	}
 
     static bool try_parse_int32(const std::string &value, int32_t &v)
+    {
+        std::stringstream ss(value);
+        ss >> v;
+
+        if (ss.fail() || !ss.eof())
+            return false;
+        
+        return true;
+    }
+
+    static bool try_parse_uint64(const std::string &value, uint64_t &v)
     {
         std::stringstream ss(value);
         ss >> v;
@@ -141,16 +152,6 @@ namespace http
             return true;
         }
         return false;
-    }
-
-    static bool is_valid_ip(const std::string& str) 
-    {
-        std::regex ipv4_pattern(
-            R"(^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$)");
-        std::regex ipv6_pattern(
-            R"(^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$)");
-
-        return std::regex_match(str, ipv4_pattern) || std::regex_match(str, ipv6_pattern);
     }
 
     static bool resolve(const std::string &uri, std::string &ip, uint16_t &port, std::string &hostname) 
@@ -336,11 +337,11 @@ namespace http
         if(!connect(&s, req.get_url(), path, hostName))
             return false;
 
-		std::string request;
+		std::string requestHeader;
 
-    	request += "GET " + path + " HTTP/1.1\r\n";
-    	request += "Host: " + hostName + "\r\n";
-    	request += "Accept: */*\r\n";
+    	requestHeader += "GET " + path + " HTTP/1.1\r\n";
+    	requestHeader += "Host: " + hostName + "\r\n";
+    	requestHeader += "Accept: */*\r\n";
 
         auto requestHeaders = req.get_headers();
 
@@ -348,14 +349,30 @@ namespace http
 		{
 			for(const auto &h : requestHeaders)
 			{
-				request += h.first + ": " + h.second + "\r\n";
+				requestHeader += h.first + ": " + h.second + "\r\n";
 			}
 		}
 
-    	request += "Connection: close\r\n\r\n";
+    	requestHeader += "Connection: close\r\n\r\n";
 
-        // Send the header
-        if(!write_all_bytes(&s, request.data(), request.size()))
+        // Send the request header
+        if(!write_all_bytes(&s, requestHeader.data(), requestHeader.size()))
+        {
+            close(&s);
+            return false;
+        }
+
+        std::string responseHeader;
+        
+        // Read the response header
+        if(read_header(&s, responseHeader) != header_error_none)
+        {
+            close(&s);
+            return false;
+        }
+
+        // Parse the response header
+        if(!parse_header(responseHeader, res.header, res.statusCode, res.contentLength))
         {
             close(&s);
             return false;
@@ -364,46 +381,18 @@ namespace http
 		int64_t bytesReceived = 0;
 		unsigned char buffer[1024];
 		std::memset(buffer, 0, 1024);
-        std::string responseHeader;
+        std::string body;
 
-		while ((bytesReceived = read(&s, buffer, 1023)) > 0) 
+        // Read the body
+		while ((bytesReceived = read(&s, buffer, 1024)) > 0) 
 		{
-			responseHeader.append((char*)buffer, bytesReceived);
+            if(onResponse)
+                onResponse(buffer, bytesReceived);
 		}
 
 		close(&s);
 
-        std::string header;
-        std::string body;
-
-        split_header_and_body(responseHeader, header, body);
-
-        if(!parse_header(responseHeader, res.header, res.statusCode))
-            return false;
-
-        if(body.size() > 0)
-        {
-            res.content.resize(body.size());
-            std::memcpy(res.content.data(), body.data(), body.size());
-        }
-
 		return true;
-    }
-
-    static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) 
-    {
-        size_t totalSize = size * nmemb;
-        std::string* str = static_cast<std::string*>(userp);
-        str->append(static_cast<char*>(contents), totalSize);
-        return totalSize;
-    }
-
-    static size_t HeaderCallback(void* contents, size_t size, size_t nmemb, void *userp) 
-    {
-        size_t totalSize = size * nmemb;
-        std::string* str = static_cast<std::string*>(userp);
-        str->append(static_cast<char*>(contents), totalSize);
-        return totalSize;
     }
 
     bool client::get_from_curl(const request &req, response &res)
@@ -412,12 +401,11 @@ namespace http
         if (!gCurl) return false;
 
         std::string requestHeader;
-        std::string response;
 
         curl::easy_setopt(gCurl, CURLOPT_URL, req.get_url().c_str());
-        curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, WriteCallback);
-        curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, &response);
-        curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, HeaderCallback);
+        curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, this);
+        curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, header_callback);
         curl::easy_setopt(gCurl, CURLOPT_HEADERDATA, &requestHeader);
 
 		struct curl_slist* requestHeaderList = nullptr;
@@ -450,19 +438,13 @@ namespace http
 		if(requestHeaderList)
 			curl::slist_free_all(requestHeaderList);
 
-        if(!parse_header(requestHeader, res.header, res.statusCode))
+        if(!parse_header(requestHeader, res.header, res.statusCode, res.contentLength))
         {
             write_error("Failed to parse header");
             curl::easy_cleanup(gCurl);
             return false;
         }
 
-        if(response.size() > 0)
-        {
-            res.content.resize(response.size());
-            std::memcpy(res.content.data(), response.data(), response.size());
-        }
-        
         curl::easy_cleanup(gCurl);
 
         return true;
@@ -483,11 +465,11 @@ namespace http
         if(string_ends_with(path, "/"))
             path.pop_back();
 
-		std::string request;
+		std::string requestHeader;
 
-        request += "POST " + path + " HTTP/1.1\r\n";
-        request += "Host: " + hostName + "\r\n";
-        request += "Accept: */*\r\n";
+        requestHeader += "POST " + path + " HTTP/1.1\r\n";
+        requestHeader += "Host: " + hostName + "\r\n";
+        requestHeader += "Accept: */*\r\n";
 
         auto requestHeaders = req.get_headers();
 
@@ -495,16 +477,16 @@ namespace http
 		{
 			for(const auto &h : requestHeaders)
 			{
-				request += h.first + ": " + h.second + "\r\n";
+				requestHeader += h.first + ": " + h.second + "\r\n";
 			}
 		}
 
-		request += "Content-Type: " + contentType + "\r\n";
-        request += "Content-Length: " + std::to_string(req.get_content_length()) + "\r\n";
-        request += "Connection: close\r\n\r\n";
+		requestHeader += "Content-Type: " + contentType + "\r\n";
+        requestHeader += "Content-Length: " + std::to_string(req.get_content_length()) + "\r\n";
+        requestHeader += "Connection: close\r\n\r\n";
 
-        // Send the header
-        if(!write_all_bytes(&s, request.data(), request.size()))
+        // Send the request header
+        if(!write_all_bytes(&s, requestHeader.data(), requestHeader.size()))
         {
             close(&s);
             return false;
@@ -517,31 +499,34 @@ namespace http
             return false;
         }
 
-        int64_t bytesReceived = 0;
-        uint8_t buffer[1024];
-        std::memset(buffer, 0, 1024);
         std::string responseHeader;
+        
+        // Read the response header
+        if(read_header(&s, responseHeader) != header_error_none)
+        {
+            close(&s);
+            return false;
+        }
 
-		while ((bytesReceived = read(&s, buffer, 1023)) > 0) 
+        // Parse the response header
+        if(!parse_header(responseHeader, res.header, res.statusCode, res.contentLength))
+        {
+            close(&s);
+            return false;
+        }
+
+		int64_t bytesReceived = 0;
+		unsigned char buffer[1024];
+		std::memset(buffer, 0, 1024);
+
+        // Read the body
+		while ((bytesReceived = read(&s, buffer, 1024)) > 0) 
 		{
-			responseHeader.append((char*)buffer, bytesReceived);
+            if(onResponse)
+                onResponse(buffer, bytesReceived);
 		}
 
 		close(&s);
-
-        std::string header;
-        std::string body;
-
-        split_header_and_body(responseHeader, header, body);
-
-        if(!parse_header(header, res.header, res.statusCode))
-            return false;
-
-        if(body.size() > 0)
-        {
-            res.content.resize(body.size());
-            std::memcpy(res.content.data(), body.data(), body.size());
-        }
 
 		return true;
     }
@@ -552,14 +537,13 @@ namespace http
         if (!gCurl) return false;
 
         std::string responseHeader;
-        std::string response;
 
         curl::easy_setopt(gCurl, CURLOPT_URL, req.get_url().c_str());
-        curl::easy_setopt(gCurl, CURLOPT_POSTFIELDS, (void*)req.get_content());
+        curl::easy_setopt(gCurl, CURLOPT_POSTFIELDS, req.get_content());
         curl::easy_setopt(gCurl, CURLOPT_POSTFIELDSIZE, req.get_content_length());
-        curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, (void*)WriteCallback);
-        curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, &response);
-        curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, HeaderCallback);
+        curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, this);
+        curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, header_callback);
         curl::easy_setopt(gCurl, CURLOPT_HEADERDATA, &responseHeader);
 
         std::string cType = "Content-Type: " + contentType;
@@ -592,16 +576,10 @@ namespace http
 
         curl::slist_free_all(requestHeaderList);
 
-        if(!parse_header(responseHeader, res.header, res.statusCode))
+        if(!parse_header(responseHeader, res.header, res.statusCode, res.contentLength))
         {
             curl::easy_cleanup(gCurl);
             return false;
-        }
-
-        if(response.size() > 0)
-        {
-            res.content.resize(response.size());
-            std::memcpy(res.content.data(), response.data(), response.size());
         }
 
         curl::easy_cleanup(gCurl);
@@ -769,11 +747,81 @@ namespace http
         return true; // All bytes sent successfully
     }
 
-    bool client::parse_header(const std::string &responseText, headers &header, int &statusCode)
+    header_error client::read_header(socket_t *s, std::string &header)
+    {
+        if(!s)
+            return header_error_failed_to_read;
+
+        const size_t maxHeaderSize = 16384;
+        const size_t bufferSize = maxHeaderSize;
+        std::vector<char> buffer;
+        buffer.resize(bufferSize);
+        int64_t headerEnd = 0;
+        int64_t totalHeaderSize = 0;
+        bool endFound = false;
+
+        char *pBuffer = buffer.data();
+
+        // Peek to find the end of the header
+        while (true) 
+        {
+            int64_t bytesPeeked = peek(s, pBuffer, bufferSize);
+
+            totalHeaderSize += bytesPeeked;
+
+            if(totalHeaderSize > maxHeaderSize) 
+            {
+                printf("header_error_max_size_exceeded 1, %zu/%zu\n", totalHeaderSize, maxHeaderSize);
+                return header_error_max_size_exceeded;
+            }
+
+            if (bytesPeeked < 0)
+                return header_error_failed_to_peek;
+
+            //Don't loop indefinitely...
+            if(bytesPeeked == 0)
+                break;
+            
+            // Look for the end of the header (double CRLF)
+            const char* endOfHeader = std::search(pBuffer, pBuffer + bytesPeeked, "\r\n\r\n", "\r\n\r\n" + 4);
+            if (endOfHeader != pBuffer + bytesPeeked) 
+            {
+                headerEnd = endOfHeader - pBuffer + 4; // Include the length of the CRLF
+                endFound = true;
+                break;
+            }
+        }
+
+        if(!endFound)
+            return header_error_end_not_found;
+
+        // Now read the header
+        header.resize(headerEnd);
+        int64_t bytesRead = read(s, header.data(), headerEnd);
+        if (bytesRead < 0) 
+            return header_error_failed_to_read;
+
+        if(header.size() > maxHeaderSize) 
+        {
+            printf("header_error_max_size_exceeded 2, %zu/%zu\n", header.size(), maxHeaderSize);
+            return header_error_max_size_exceeded;
+        }
+
+        return header_error_none;
+    }
+
+    bool client::parse_header(const std::string &responseText, headers &header, int &statusCode, uint64_t &contentLength)
     {
         std::istringstream responseStream(responseText);
         std::string line;
         size_t count = 0;
+
+        auto to_lower = [] (const std::string &str) -> std::string {
+            std::string lower_str = str;
+            std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
+                        [](unsigned char c) { return std::tolower(c); });
+            return lower_str;
+        };
 
         while(std::getline(responseStream, line))
         {
@@ -797,37 +845,46 @@ namespace http
             }
             else
             {
-                auto fields = string_split(line, ':', 2);
+                auto parts = string_split(line, ':', 2);
 
-                if(fields.size() == 2)
+                if(parts.size() == 2)
                 {
-                    fields[1] = string_trim_start(fields[1]);
-                    header[fields[0]] = fields[1];
+                    parts[0] = to_lower(parts[0]);
+                    parts[1] = string_trim_start(parts[1]);
+                    header[parts[0]] = parts[1];
                 }
             }
 
             count++;
         }
 
+        if(header.contains("content-length"))
+        {
+            if(!try_parse_uint64(header["content-length"], contentLength))
+                contentLength = 0;
+        }
+
         return count > 0;
     }
 
-    void client::split_header_and_body(const std::string &response, std::string &header, std::string &body)
+    size_t client::write_callback(void* contents, size_t size, size_t nmemb, void* userp)
     {
-        std::string separator = "\r\n\r\n";
-        size_t pos = response.find(separator);
+        client *pClient = reinterpret_cast<client*>(userp);
+        size_t totalSize = size * nmemb;
+        if(pClient->onResponse)
+            pClient->onResponse(contents, totalSize);
 
-        if (pos != std::string::npos) 
-        {
-            header = response.substr(0, pos);
-            body = response.substr(pos + separator.length());
-        } 
-        else 
-        {
-            // If no separator is found, assign entire response to header
-            header = response;
-            body = ""; // No body present
-        }
+        // std::string* str = static_cast<std::string*>(userp);
+        // str->append(static_cast<char*>(contents), totalSize);
+        return totalSize;
+    }
+    
+    size_t client::header_callback(void* contents, size_t size, size_t nmemb, void* userp)
+    {
+        size_t totalSize = size * nmemb;
+        std::string* str = static_cast<std::string*>(userp);
+        str->append(static_cast<char*>(contents), totalSize);
+        return totalSize;
     }
 
     request::request()
@@ -890,7 +947,7 @@ namespace http
         return content;
     }
 
-    uint64_t request::get_content_length() const
+    size_t request::get_content_length() const
     {
         return contentLength;
     }
@@ -908,6 +965,7 @@ namespace http
     response::response()
     {
         statusCode = 0;
+        contentLength = 0;
     }
 
     int response::get_status_code() const
@@ -915,23 +973,9 @@ namespace http
         return statusCode;
     }
     
-    std::vector<uint8_t> &response::get_content()
+    size_t response::get_content_length() const
     {
-        return content;
-    }
-
-    std::string response::get_content_as_string() const
-    {
-        if(content.size() == 0)
-            return 0;
-        
-        std::string res((char*)content.data(), content.size());
-        return res;
-    }
-
-    uint64_t response::get_content_length() const
-    {
-        return content.size();
+        return contentLength;
     }
 
     headers &response::get_headers()

@@ -50,6 +50,7 @@
 #include <cstdlib>
 #include <unordered_map>
 #include <vector>
+#include <functional>
 
 namespace http
 {
@@ -84,7 +85,6 @@ namespace http
 
 	using headers = std::unordered_map<std::string,std::string>;
 
-
     class request
     {
     public:
@@ -94,13 +94,13 @@ namespace http
         std::string get_url() const;
         void set_content(void *data, size_t size, bool copyData = false);
         uint8_t *get_content() const;
-        uint64_t get_content_length() const;
+        size_t get_content_length() const;
         void set_header(const std::string &key, const std::string &value);
         headers get_headers() const;
     private:
         std::string url;
         uint8_t *content;
-        uint64_t contentLength;
+        size_t contentLength;
         headers header;
         bool ownsData;
     };
@@ -113,19 +113,29 @@ namespace http
     public:
         response();
         int get_status_code() const;
-        std::vector<uint8_t> &get_content();
-        std::string get_content_as_string() const;
-        uint64_t get_content_length() const;
+        size_t get_content_length() const;
         headers &get_headers();
     private:
-        int statusCode;
-        std::vector<uint8_t> content;
+        int32_t statusCode;
+        size_t contentLength;
         headers header;
     };
+
+    enum header_error 
+    {
+        header_error_none,
+        header_error_failed_to_peek,
+        header_error_failed_to_read,
+        header_error_end_not_found,
+        header_error_max_size_exceeded
+    };
+
+    using response_callback = std::function<void(const void *data,size_t size)>;
 
 	class client
 	{
 	public:
+        response_callback onResponse;
 		client(bool useCurl = true);
 		~client();
 		bool get(const request &req, response &res);
@@ -142,8 +152,10 @@ namespace http
 		int64_t peek(socket_t *s, void *buffer, size_t size);
 		int64_t write(socket_t *s, const void *buffer, size_t size);
         bool write_all_bytes(socket_t *s, const void *buffer, size_t size);
-        static bool parse_header(const std::string &responseText, headers &header, int &statusCode);
-        static void split_header_and_body(const std::string &response, std::string &header, std::string &body);
+        header_error read_header(socket_t *s, std::string &header);
+        static bool parse_header(const std::string &responseText, headers &header, int &statusCode, uint64_t &contentLength);
+        static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp);
+        static size_t header_callback(void* contents, size_t size, size_t nmemb, void* userp);
 	};
 }
 
