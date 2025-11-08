@@ -320,12 +320,12 @@ namespace http
             return get_from_socket(req, res);
 	}
 
-    bool client::post(const request &req, const std::string &contentType, response &res)
+    bool client::post(const request &req, response &res)
     {
         if(curl::is_loaded() && useCurl)
-            return post_from_curl(req, contentType, res);
+            return post_from_curl(req, res);
         else
-            return post_from_socket(req, contentType, res);
+            return post_from_socket(req, res);
     }
     
     bool client::get_from_socket(const request &req, response &res)
@@ -450,11 +450,8 @@ namespace http
         return true;
     }
 
-    bool client::post_from_socket(const request &req, const std::string &contentType, response &res)
+    bool client::post_from_socket(const request &req, response &res)
     {
-        if(req.get_content() == nullptr || req.get_content_length() == 0)
-            return false;
-
 		socket_t s = {0};
         std::string path;
         std::string hostName;
@@ -481,8 +478,15 @@ namespace http
 			}
 		}
 
-		requestHeader += "Content-Type: " + contentType + "\r\n";
-        requestHeader += "Content-Length: " + std::to_string(req.get_content_length()) + "\r\n";
+        const uint8_t *pContent = req.get_content();
+        const size_t contentLength = req.get_content_length();
+
+        if(pContent && contentLength > 0)
+        {
+		    requestHeader += "Content-Type: " + req.get_content_type() + "\r\n";
+            requestHeader += "Content-Length: " + std::to_string(contentLength) + "\r\n";
+        }
+
         requestHeader += "Connection: close\r\n\r\n";
 
         // Send the request header
@@ -493,10 +497,13 @@ namespace http
         }
 
         // Send the content
-        if(!write_all_bytes(&s, req.get_content(), req.get_content_length()))
+        if(pContent && contentLength > 0)
         {
-            close(&s);
-            return false;
+            if(!write_all_bytes(&s, pContent, contentLength))
+            {
+                close(&s);
+                return false;
+            }
         }
 
         std::string responseHeader;
@@ -531,24 +538,38 @@ namespace http
 		return true;
     }
 
-    bool client::post_from_curl(const request &req, const std::string &contentType, response &res)
+    bool client::post_from_curl(const request &req, response &res)
     {
         CURL *gCurl = curl::easy_init();
-        if (!gCurl) return false;
-
-        std::string responseHeader;
+        
+        if (!gCurl) 
+            return false;
 
         curl::easy_setopt(gCurl, CURLOPT_URL, req.get_url().c_str());
-        curl::easy_setopt(gCurl, CURLOPT_POSTFIELDS, req.get_content());
-        curl::easy_setopt(gCurl, CURLOPT_POSTFIELDSIZE, req.get_content_length());
+
+        uint8_t *pContent = req.get_content();
+        size_t contentLength = req.get_content_length();
+
+        if(pContent && contentLength > 0)
+        {
+            curl::easy_setopt(gCurl, CURLOPT_POSTFIELDS, pContent);
+            curl::easy_setopt(gCurl, CURLOPT_POSTFIELDSIZE, contentLength);
+        }
+        
         curl::easy_setopt(gCurl, CURLOPT_WRITEFUNCTION, write_callback);
         curl::easy_setopt(gCurl, CURLOPT_WRITEDATA, this);
         curl::easy_setopt(gCurl, CURLOPT_HEADERFUNCTION, header_callback);
+        
+        std::string responseHeader;
         curl::easy_setopt(gCurl, CURLOPT_HEADERDATA, &responseHeader);
 
-        std::string cType = "Content-Type: " + contentType;
         struct curl_slist* requestHeaderList = nullptr;
-        requestHeaderList = curl::slist_append(requestHeaderList, cType.c_str());
+
+        if(pContent && contentLength > 0)
+        {
+            std::string s = "Content-Type: " + req.get_content_type();
+            requestHeaderList = curl::slist_append(requestHeaderList, s.c_str());
+        }
 
         auto requestHeaders = req.get_headers();
 
@@ -891,6 +912,7 @@ namespace http
     {
         content = nullptr;
         contentLength = 0;
+        contentType = "text/plain";
         ownsData = false;
     }
 
@@ -950,6 +972,16 @@ namespace http
     size_t request::get_content_length() const
     {
         return contentLength;
+    }
+
+    void request::set_content_type(const std::string &contentType)
+    {
+        this->contentType = contentType;
+    }
+
+    std::string request::get_content_type() const
+    {
+        return contentType;
     }
 
     void request::set_header(const std::string &key, const std::string &value)

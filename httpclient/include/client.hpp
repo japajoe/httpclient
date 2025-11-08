@@ -95,12 +95,15 @@ namespace http
         void set_content(void *data, size_t size, bool copyData = false);
         uint8_t *get_content() const;
         size_t get_content_length() const;
+        void set_content_type(const std::string &contentType);
+        std::string get_content_type() const;
         void set_header(const std::string &key, const std::string &value);
         headers get_headers() const;
     private:
         std::string url;
-        uint8_t *content;
+        uint8_t *content;        
         size_t contentLength;
+        std::string contentType;
         headers header;
         bool ownsData;
     };
@@ -139,13 +142,13 @@ namespace http
 		client(bool useCurl = true);
 		~client();
 		bool get(const request &req, response &res);
-        bool post(const request &req, const std::string &contentType, response &res);
+        bool post(const request &req, response &res);
 	private:
         bool useCurl;
         bool get_from_socket(const request &req, response &res);
         bool get_from_curl(const request &req, response &res);
-        bool post_from_socket(const request &req, const std::string &contentType, response &res);
-        bool post_from_curl(const request &req, const std::string &contentType, response &res);
+        bool post_from_socket(const request &req, response &res);
+        bool post_from_curl(const request &req, response &res);
         bool connect(socket_t *s, const std::string &url, std::string &path, std::string &hostName);
 		void close(socket_t *s);
 		int64_t read(socket_t *s, void *buffer, size_t size);
