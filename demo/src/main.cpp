@@ -12,7 +12,7 @@ int main(int argc, char **argv)
 
 void example_get_request()
 {
-	http::client client(false);
+	http::client client;
 
 	std::string responseText;
 
