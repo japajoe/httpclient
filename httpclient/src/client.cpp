@@ -374,7 +374,7 @@ namespace http
 			}
 		}
 
-    	requestHeader += "Connection: close\r\n\r\n";
+        requestHeader += "Connection: close\r\n\r\n";
 
         // Send the request header
         if(!write_all_bytes(&s, requestHeader.data(), requestHeader.size()))
@@ -695,6 +695,9 @@ namespace http
 
         s->addressFamily = addressFamily;
 
+        const int noDelayFlag = 1;
+        set_socket_option(s, IPPROTO_TCP, TCP_NODELAY, &noDelayFlag, sizeof(int));
+
         if(ipVersion == ip_version_ip_v4) 
 		{
             s->address.ipv4.sin_family = AF_INET;
@@ -801,6 +804,15 @@ namespace http
         }
 
         return true; // All bytes sent successfully
+    }
+
+    bool client::set_socket_option(socket_t *s, int level, int option, const void *value, uint32_t valueSize)
+    {
+    #ifdef _WIN32
+        return setsockopt(s->fd, level, option, (char*)value, valueSize) != 0 ? false : true;
+    #else
+        return setsockopt(s->fd, level, option, value, valueSize) != 0 ? false : true;
+    #endif
     }
 
     header_error client::read_header(socket_t *s, std::string &header)
