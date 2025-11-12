@@ -828,6 +828,15 @@ namespace http
         int64_t totalHeaderSize = 0;
         bool endFound = false;
 
+        auto find_header_end = [] (const char* haystack, const char* needle, size_t haystackLength, size_t needleLength) -> int64_t {
+            for (size_t i = 0; i <= haystackLength - needleLength; ++i) {
+                if (memcmp(haystack + i, needle, needleLength) == 0) {
+                    return static_cast<int>(i); // Found the needle, return the index
+                }
+            }
+            return -1; // Not found
+        };
+
         char *pBuffer = buffer.data();
 
         // Peek to find the end of the header
@@ -851,12 +860,13 @@ namespace http
                 break;
             
             // Look for the end of the header (double CRLF)
-            const char* endOfHeader = std::search(pBuffer, pBuffer + bytesPeeked, "\r\n\r\n", "\r\n\r\n" + 4);
-            if (endOfHeader != pBuffer + bytesPeeked) 
+            int64_t end = find_header_end(pBuffer, "\r\n\r\n", bytesPeeked, 4);
+
+            if(end >= 0)
             {
-                headerEnd = endOfHeader - pBuffer + 4; // Include the length of the CRLF
+                headerEnd = end + 4; //Include the length of the CRLF
                 endFound = true;
-                break;
+                break;                
             }
         }
 

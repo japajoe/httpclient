@@ -6,7 +6,7 @@ void example_post_request();
 
 int main(int argc, char **argv)
 {
-	example_get_request();
+	example_post_request();
 	return 0;
 }
 
